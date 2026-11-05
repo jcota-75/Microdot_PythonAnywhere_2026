@@ -1,27 +1,12 @@
-from microdot import Microdot, Response
-import ujson as json
+
+from microdot.wsgi import Microdot
+import os
 import time
-import network
-from machine import ADC,Pin
-ADC20=ADC(Pin(20,Pin.IN) )
 
-# ---------------- WIFI ----------------
-ssid = 'PUACJ'
-password = 'PUACJ2024'
-
-wlan = network.WLAN(network.STA_IF)
-wlan.active(True)
-
-if not wlan.isconnected():
-    wlan.connect(ssid, password)
-    while not wlan.isconnected():
-        time.sleep(1)
-
-ip = wlan.ifconfig()[0]
-print("Servidor en: http://" + ip + "/")
-
-# ---------------- APP ----------------
 app = Microdot()
+
+# Clave para autorizar mediciones del ESP32
+API_TOKEN = os.environ.get("IOT_API_TOKEN", "")
 
 # Buffer de datos
 datos = {
@@ -30,31 +15,36 @@ datos = {
     "umbral": 2
 }
 
-
-# ---------------- HTML (inline) ----------------
-HTML = """ <!DOCTYPE html>
+# ---------------- HTML ----------------
+HTML = """
+<!DOCTYPE html>
 <html>
 <head>
-    <title>ESP32 Dashboard</title>
+    <meta charset="UTF-8">
+    <title>Microdot - PythonAnywhere</title>
 </head>
-
 <body>
 
-<h2>ADC</h2>
-<h3 id="adc">0</h3>
+<h2>Servidor Microdot - ADC</h2>
+<h3 id="adc">Esperando datos...</h3>
 
 <script>
+async function actualizar() {
+    try {
+        const res = await fetch('/refresh');
+        const data = await res.json();
 
-function actualizar(){
-    fetch('/refresh')
-        .then(res => {return res.json();})
-        .then(data => {
-            let ultimo = data.adc1[data.adc1.length - 1];
-            document.getElementById("adc").innerText = ultimo;
-            console.log(ultimo);
-        });
+        if (data.adc1.length > 0) {
+            const ultimo = data.adc1[data.adc1.length - 1];
+            document.getElementById("adc").innerText =
+                ultimo + " V";
+        }
+    } catch (error) {
+        console.error(error);
+    }
 }
 
+actualizar();
 setInterval(actualizar, 1000);
 </script>
 
@@ -64,23 +54,45 @@ setInterval(actualizar, 1000);
 
 # ---------------- ROUTES ----------------
 
-# Página principal
-@app.route('/')
+@app.get('/')
 def index(request):
     return HTML, 200, {'Content-Type': 'text/html'}
 
-# POST → recibir datos (como Flask)
-@app.route('/refresh', methods=['GET', 'POST'])
-def recibir_datos(request):
-    global datos
-    if request.method == 'GET':
-        val_uv=ADC20.read_uv()
-        VoltajeReal=val_uv*0.000001
-        datos['adc1'].append(str(VoltajeReal))
-        if len(datos["adc1"]) > 20:
-            datos["adc1"].pop(0)
-        return datos
-        
-# ---------------- RUN ----------------
-app.run(host='0.0.0.0', port=80)
 
+@app.get('/refresh')
+def consultar_datos(request):
+    return datos
+
+
+@app.post('/refresh')
+def recibir_datos(request):
+
+    if not API_TOKEN or request.headers.get('X-API-Key') != API_TOKEN:
+        return {'error': 'No autorizado'}, 401
+
+    recibido = request.json
+
+    if not isinstance(recibido, dict):
+        return {'error': 'JSON invalido'}, 400
+
+    try:
+        voltaje = float(recibido['adc1'])
+    except (KeyError, TypeError, ValueError):
+        return {'error': 'ADC invalido'}, 400
+
+    if not 0 <= voltaje <= 3.3:
+        return {'error': 'Voltaje fuera de rango'}, 400
+
+    datos['adc1'].append(round(voltaje, 4))
+    datos['tiempo'].append(time.time())
+
+    if len(datos['adc1']) > 20:
+        datos['adc1'].pop(0)
+        datos['tiempo'].pop(0)
+
+    return {'status': 'OK', 'adc1': voltaje}
+
+
+# Solo para pruebas locales
+if __name__ == '__main__':
+    app.run(port=5000)
