@@ -6,10 +6,8 @@ from machine import ADC,Pin
 ADC20=ADC(Pin(20,Pin.IN) )
 
 # ---------------- WIFI ----------------
-ssid = 'INFINITUM5826_2.4'
-password = 'FGqJLU7KAq'
-# ssid = 'PUACJ'
-# password = 'PUACJ2024'
+ssid = 'PUACJ'
+password = 'PUACJ2024'
 
 wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
